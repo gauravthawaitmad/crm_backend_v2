@@ -27,4 +27,13 @@ async function getProfile(req, res, next) {
   }
 }
 
-module.exports = { login, getProfile };
+/**
+ * Logout — stateless JWT, so the client drops the token.
+ * Requires auth so we know who is logging out; extend here
+ * if server-side session invalidation (loggedSessions) is added later.
+ */
+async function logout(req, res) {
+  return ResponseHandler.success(res, null, 'Logged out successfully');
+}
+
+module.exports = { login, getProfile, logout };

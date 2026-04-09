@@ -10,4 +10,7 @@ router.post('/login', authController.login);
 // GET  /api/auth/me     — protected
 router.get('/me', authMiddleware, authController.getProfile);
 
+// POST /api/auth/logout — protected (client drops token; auth ensures valid session)
+router.post('/logout', authMiddleware, authController.logout);
+
 module.exports = router;

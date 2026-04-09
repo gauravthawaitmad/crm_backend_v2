@@ -1,8 +1,19 @@
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { User, UserPassword } = require('../../models');
+const { ALLOWED_ROLES } = require('../utils/roleUtils');
 
 /**
  * Authenticates a user and returns a signed JWT + safe user fields.
+ *
+ * Steps:
+ * 1. Find user by user_login
+ * 2. Role gate — block roles not permitted to use the CRM
+ * 3. Find UserPassword record; handle first-time login (no row yet)
+ * 4. Check removed / disabled
+ * 5. Check account lock
+ * 6. Verify password + record attempt
+ * 7. Sign JWT and return response with requiresPasswordChange flag
  */
 async function login(user_login, password) {
   // 1. Find user by login
@@ -13,27 +24,57 @@ async function login(user_login, password) {
     throw err;
   }
 
-  // 2. Find password record
-  // user_data.user_id is STRING ("1924598.000000000"), user_passwords.user_id is INTEGER
-  const numericUserId = parseInt(parseFloat(user.user_id));
-  const userPassword = await UserPassword.findOne({ where: { user_id: numericUserId } });
-  if (!userPassword) {
-    const err = new Error('Invalid credentials');
-    err.status = 401;
+  // 2. Role gate — block roles that have no access to this app
+  if (!ALLOWED_ROLES.includes(user.user_role)) {
+    const err = new Error('You do not have access to this application.');
+    err.status = 403;
     throw err;
   }
 
-  // 3. Check account lock
+  // 3. Find password record — handle first-time login
+  // user_data.user_id is STRING ("1924598.000000000"), user_passwords.user_id is INTEGER
+  const numericUserId = parseInt(parseFloat(user.user_id));
+  let userPassword = await UserPassword.findOne({ where: { user_id: numericUserId } });
+
+  if (!userPassword) {
+    // No password record yet — only the default password is accepted
+    if (password !== 'password') {
+      const err = new Error('For your first login, please use the default password.');
+      err.status = 401;
+      throw err;
+    }
+
+    // Create initial password row; beforeCreate hook will hash password_hash
+    const salt = await bcrypt.genSalt(12);
+    userPassword = await UserPassword.create({
+      user_id: numericUserId,
+      password_hash: 'password',
+      salt,
+      is_default_password: true,
+      login_attempts: 0,
+      emailVerified: false,
+    });
+
+    await userPassword.recordLogin(true);
+    return _buildLoginResponse(user, userPassword);
+  }
+
+  // 4. Removed / disabled check
+  if (userPassword.removed) {
+    const err = new Error('Your account has been disabled. Contact your administrator.');
+    err.status = 403;
+    throw err;
+  }
+
+  // 5. Account lock check
   if (userPassword.isAccountLocked()) {
     const err = new Error('Account is temporarily locked. Please try again later.');
     err.status = 401;
     throw err;
   }
 
-  // 4. Verify password using model's instance method (handles default + bcrypt)
+  // 6. Verify password and record attempt
   const isValid = await userPassword.verifyPassword(password);
-
-  // 5. Record login attempt (success or failure)
   await userPassword.recordLogin(isValid);
 
   if (!isValid) {
@@ -42,7 +83,13 @@ async function login(user_login, password) {
     throw err;
   }
 
-  // 6. Sign JWT
+  return _buildLoginResponse(user, userPassword);
+}
+
+/**
+ * Builds the JWT + response payload after a successful login.
+ */
+function _buildLoginResponse(user, userPassword) {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not configured');
 
@@ -59,6 +106,7 @@ async function login(user_login, password) {
 
   return {
     token,
+    requiresPasswordChange: userPassword.is_default_password === true,
     user: {
       user_id: user.user_id,
       user_role: user.user_role,

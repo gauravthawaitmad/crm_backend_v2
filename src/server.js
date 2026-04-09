@@ -58,10 +58,12 @@ app.use((err, req, res, next) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`✅ CRM v2 Backend running on port ${PORT}`);
-  console.log(`   Health check: http://localhost:${PORT}/health`);
-  console.log(`   Auth login:   POST http://localhost:${PORT}/api/auth/login`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`✅ CRM v2 Backend running on port ${PORT}`);
+    console.log(`   Health check: http://localhost:${PORT}/health`);
+    console.log(`   Auth login:   POST http://localhost:${PORT}/api/auth/login`);
+  });
+}
 
 module.exports = app;
